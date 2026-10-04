@@ -4,13 +4,13 @@ version = 3
 
 [[package]]
 name = "pmpx-plugin"
-version = "0.1.0"
+version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2c7088240c627cfda0cc1f446e198e0d8caac19bd43ce04059dcb7c264f9aba9"
+checksum = "81a22f5c9c35f284d2e64c9a1d19ebffeeb4f9a9a94e0e5197f853583ca1127b"
 
 [[package]]
 name = "pmpx-plugin-bun"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "pmpx-plugin",
 ]
