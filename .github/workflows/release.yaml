@@ -105,82 +105,32 @@ jobs:
   # and a slow index should not hold a release up. It is the *consuming* side that needs
   # crates.io: a host derives the download URL from the crate's registry metadata, so a version
   # that never reached the registry has no assets anyone can find.
+
+  # ---------------------------------------------------------------------------
+  # The prebuilt assets (`{crate}-{version}-{target}.{so,dylib,dll}` plus the manifest that
+  # travels with it).
+  #
+  # The pipeline itself lives in the tool crate, as
+  # `.github/workflows/plugin-assets.yaml`, because that repository owns the naming convention
+  # and the version of `plugin-asset` that produces the files -- so a new generator version is
+  # one commit there instead of five here. This repository only says that it wants them.
+  #
+  # It does **not** wait for `publish`. Producing the assets uses the checked-out source -- the
+  # generated wrapper depends on the plugin by path -- so nothing here needs the registry, and a
+  # slow index should not hold a release up. It is the *consuming* side that needs crates.io: a
+  # host derives the download URL from the crate's registry metadata, so a version that never
+  # reached the registry has no assets anyone can find.
   # ---------------------------------------------------------------------------
   assets:
-    name: Assets (${{ matrix.target }})
+    name: Assets
     needs: [ checks ]
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - runner: ubuntu-latest
-            target: x86_64-unknown-linux-gnu
-          - runner: windows-latest
-            target: x86_64-pc-windows-msvc
-          # `macos-13` is retired; `macos-15-intel` is its replacement, and plain
-          # `macos-15` is the Apple silicon image.
-          - runner: macos-15-intel
-            target: x86_64-apple-darwin
-          - runner: macos-15
-            target: aarch64-apple-darwin
-    runs-on: ${{ matrix.runner }}
+    # `@main` on purpose: it is what lets this repository pick up a new generator version
+    # without an edit here. The note at the top of that workflow spells out the trade.
+    uses: imba97/crate-plugin-kit/.github/workflows/plugin-assets.yaml@main
+    with:
+      # The host this plugin serves. The assets are named for it: `pmpx-plugin.toml`, the
+      # `pmpx-plugin-` crate prefix, the `pmpx_plugin_` lib stem.
+      id: pmpx
     permissions:
-      # Create the release for this tag and upload into it.
+      # The called workflow can only narrow this; it needs to write to the release.
       contents: write
-    env:
-      # Consumed by version, like anything else. Bumping this is a deliberate act: it
-      # decides which wrapper generation an already-published asset was built with.
-      PLUGIN_ASSET_VERSION: "0.2.1"
-    steps:
-      - uses: actions/checkout@v7
-
-      - name: Install stable toolchain
-        shell: bash
-        run: |
-          rustup toolchain install stable --profile minimal
-          rustup default stable
-          rustc --version
-
-      - uses: Swatinem/rust-cache@v2
-
-      # Installed from the release archive instead of compiled. This job runs once per
-      # target, and building the tool from source in each of them meant minutes of compiling
-      # per leg for the same bytes every time. `cargo-binstall` reads the archive out of the
-      # release; `[package.metadata.binstall]` in that crate says where the binary sits inside
-      # it.
-      #
-      # `--disable-strategies compile` is deliberate: with the compile fallback left on, a
-      # missing or broken archive would silently go back to compiling and this step would keep
-      # "working" while the release got slow again -- the failure nobody reads the logs for.
-      # With it, a release stops instead.
-      #
-      # The version is written unquoted on purpose: `run` uses bash on Linux/macOS and pwsh on
-      # Windows, and quotes around a `${{ }}` value are passed through to the program by some
-      # of those shells.
-      - uses: cargo-bins/cargo-binstall@v1.25.1
-      - name: Install plugin-asset
-        run: cargo binstall crate-plugin-kit --version ${{ env.PLUGIN_ASSET_VERSION }} --bin plugin-asset --no-confirm --disable-strategies compile
-
-      # `--target-dir` keeps its default (`<checkout>/target`), which is what the cache
-      # action above stores, so the dependency builds are reused between releases.
-      # The tool refuses to write anything if the version in `pmpx-plugin.toml` and the
-      # one in `Cargo.toml` disagree, and it `dlopen`s the result before handing it over.
-      - name: Build the assets
-        run: plugin-asset --id pmpx --target ${{ matrix.target }} --out-dir dist
-
-      # The release object is created here -- the crates.io job does not need one. Every
-      # matrix leg tries, so "already exists" and losing that race are not failures; only
-      # the upload has to succeed.
-      - name: Upload them to the tag
-        shell: bash
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          set -euo pipefail
-          tag="$GITHUB_REF_NAME"
-          gh release view "$tag" >/dev/null 2>&1 \
-            || gh release create "$tag" --title "$tag" --notes "Release $tag" \
-            || true
-          gh release upload "$tag" dist/* --clobber
-          echo "assets now on the release:"
-          gh release view "$tag" --json assets --jq '.assets[].name'
