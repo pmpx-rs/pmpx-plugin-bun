@@ -1,5 +1,10 @@
 /target
 
+# Dev-only local override: `[patch.crates-io]` pointing at a sibling checkout outside this
+# repository (the `pmpx-plugin` contract crate). Cargo fails hard on a patch aimed at a missing
+# path, so committing this would break every lone clone and every CI run.
+/.cargo/config.toml
+
 # Cargo.lock is committed on purpose, unlike a plain library. CI resolves with
 # `--locked`, so the lockfile is what records which contract crate the mapping was
 # checked against.
