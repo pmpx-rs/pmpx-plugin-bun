@@ -1,0 +1,170 @@
+name: Checks
+
+# The checks a release has to pass. This file has no trigger of its own: the only
+# way to run it is to call it, from release.yaml.
+#
+# That is what makes "do not publish until everything passes" structural rather
+# than a matter of timing. As a reusable workflow this is just `needs:` inside
+# one run, instead of two runs trying to wait for each other.
+on:
+  workflow_call:
+
+# Read-only: nothing here needs to write anything back.
+permissions:
+  contents: read
+
+# Declared here as well as in the caller: a workflow's own `env` is not passed on
+# to a workflow it calls.
+env:
+  CARGO_TERM_COLOR: always
+  # Fail any build script or rustc invocation that emits a warning we asked for.
+  RUSTFLAGS: -D warnings
+
+jobs:
+  test:
+    name: Test (${{ matrix.os }})
+    # This crate is a plain library here, but what it turns into is a cdylib that
+    # pmpx `dlopen`s, and the file name pmpx looks for is derived differently on
+    # each platform. All three run rather than one.
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+
+      # No rust-toolchain.toml on purpose: the MSRV in Cargo.toml is what plugin
+      # authors are promised, and the msrv job below is what checks it.
+      - name: Install stable toolchain
+        shell: bash
+        run: |
+          rustup toolchain install stable --profile minimal --component clippy,rustfmt
+          rustup default stable
+          rustc --version
+          cargo --version
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Check formatting
+        run: cargo fmt --all --check
+
+      - name: Clippy
+        run: cargo clippy --all-targets --locked -- -D warnings
+
+      # The unit tests pin the verb mapping, including the two verbs that must go
+      # through `bun run` and the verbs that must not.
+      - name: Test
+        run: cargo test --locked
+
+      - name: Docs
+        env:
+          RUSTDOCFLAGS: -D warnings
+        run: cargo doc --no-deps --locked
+
+      # Only `--list`, never a full `cargo package`: the full form resolves this
+      # crate's dependencies from the registry, so a commit that bumps the contract
+      # requirement ahead of the contract crate's own release fails here on main --
+      # and the failure looks nothing like a version problem. `--list` reads the
+      # manifest and reports the file set without touching the registry. The verify
+      # build still happens where it matters, inside `cargo publish`.
+      #
+      # A target directory of its own keeps `target/package/` out of the cache the
+      # action walks during its post-job cleanup.
+      - name: Package
+        if: runner.os == 'Linux'
+        env:
+          CARGO_TARGET_DIR: ${{ runner.temp }}/package-target
+        shell: bash
+        run: |
+          set -euo pipefail
+          list=$(cargo package --list)
+          printf '%s\n' "$list"
+
+          # crate-plugin-kit locates this through `cargo metadata` and copies it out
+          # of the published `.crate`; pmpx refuses to score a plugin without it. A
+          # build that left it behind would only fail on a user's machine.
+          if ! printf '%s\n' "$list" | grep -qx 'pmpx-plugin.toml'; then
+            echo "::error::pmpx-plugin.toml is not in the package; pmpx cannot install the plugin without it"
+            exit 1
+          fi
+
+          # The other three are what a published crate is expected to carry.
+          for want in Cargo.toml src/lib.rs README.md LICENSE; do
+            if ! printf '%s\n' "$list" | grep -qx "$want"; then
+              echo "::error::$want is missing from the package"
+              exit 1
+            fi
+          done
+
+          echo "the package carries the manifest and the usual files"
+
+      # The cdylib file name is derived from the crate name by crate-plugin-kit, and
+      # pmpx then looks for exactly that name inside the plugin directory. Renaming the
+      # lib target would still build here and then never load.
+      - name: The library name is the one pmpx derives
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          want=pmpx_plugin_bun
+          got=$(cargo metadata --no-deps --format-version 1 \
+            | python3 -c 'import json,sys; print(json.load(sys.stdin)["packages"][0]["targets"][0]["name"])')
+          if [ "$got" != "$want" ]; then
+            echo "::error::the lib target is '$got', but pmpx derives '$want' from the crate name"
+            exit 1
+          fi
+          echo "lib name is $got"
+
+      # "No async runtime anywhere in the stack" is a promise the whole project makes.
+      # Without this check it is only a sentence, and a dependency could pull tokio in
+      # without anyone noticing.
+      - name: No async runtime in the dependency tree
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          names=$(cargo tree --prefix none 2>/dev/null | awk '{print $1}' | sort -u)
+          offenders=$(printf '%s\n' "$names" \
+            | grep -xE 'tokio|async-std|smol|async-io|async-executor|async-global-executor' \
+            || true)
+          if [ -n "$offenders" ]; then
+            echo "::error::this plugin promises zero async runtime, but the dependency tree contains:"
+            echo "$offenders"
+            exit 1
+          fi
+          echo "no async runtime in the dependency tree"
+
+  # ---------------------------------------------------------------------------
+  # MSRV. `rust-version = "1.82"` is a promise; without this job it is only a line in
+  # the manifest. 1.82 is the contract crate's floor and not this crate's own -- the
+  # mapping code would compile on far less -- so it is the contract crate that gets
+  # raised first if that ever changes.
+  # ---------------------------------------------------------------------------
+  msrv:
+    name: MSRV
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Read rust-version from the manifest
+        id: msrv
+        run: |
+          set -euo pipefail
+          version=$(python3 -c '
+          import tomllib
+          with open("Cargo.toml", "rb") as f:
+              print(tomllib.load(f)["package"]["rust-version"])')
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "MSRV is $version"
+
+      - name: Install MSRV toolchain
+        run: |
+          rustup toolchain install "${{ steps.msrv.outputs.version }}" --profile minimal
+          rustup default "${{ steps.msrv.outputs.version }}"
+
+      # --locked because the committed lockfile is what CI should resolve. Building
+      # every target is enough: this job proves the crate compiles on the floor, not
+      # that the suite passes there.
+      - name: Build on MSRV
+        run: cargo build --all-targets --locked

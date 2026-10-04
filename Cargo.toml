@@ -1,0 +1,26 @@
+[package]
+name = "pmpx-plugin-bun"
+version = "0.1.0"
+edition = "2021"
+# Driven by the contract crate, which needs 1.82 for `#[unsafe(no_mangle)]` in the wrapper it
+# generates.
+rust-version = "1.82"
+license = "MIT"
+repository = "https://github.com/pmpx-rs/pmpx-plugin-bun"
+description = "Maps pmpx verbs onto bun commands."
+keywords = ["pmpx", "plugin", "bun", "package-manager"]
+categories = ["development-tools"]
+
+[lib]
+# Must match the lib stem `KitConfig::new("pmpx")` derives: the crate name minus the
+# "pmpx-plugin-" prefix leaves "bun", and lib_stem_prefix "pmpx_plugin_" gives this.
+#
+# A plain rlib on purpose. crate-plugin-kit generates a wrapper crate with
+# `crate-type = ["cdylib"]` that depends on this library and calls `export!` for it, so this
+# crate must not be a cdylib itself -- a cdylib-only crate cannot be linked as a dependency.
+name = "pmpx_plugin_bun"
+
+[dependencies]
+# The contract crate. crate-plugin-kit repeats this requirement verbatim in the wrapper it
+# generates, so it does not have to be a range.
+pmpx-plugin = "0.1.0"

@@ -1,0 +1,5 @@
+/target
+
+# Cargo.lock is committed on purpose, unlike a plain library. CI resolves with
+# `--locked`, so the lockfile is what records which contract crate the mapping was
+# checked against.

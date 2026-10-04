@@ -1,0 +1,21 @@
+# Read by pmpx when it scans the plugin directory; no dlopen is involved.
+#
+# `name` must equal `PackageManager::name()` -- the host refuses to load the library when they
+# disagree, which is what catches a plugin directory assembled out of mismatched pieces.
+[plugin]
+name    = "bun"
+version = "0.1.0"
+abi     = 1
+family  = "node"
+
+# Evidence used to score this backend against a project root.
+#
+# Either lockfile is strong (100): it proves the project was actually resolved by bun, and both
+# spellings have to be listed because bun renamed its lockfile. `bun.lock` is the current text
+# format, `bun.lockb` the older binary one, and a project that has not been migrated carries
+# only the latter. `package.json` is weak (10): it only proves the ecosystem, not the tool --
+# and this family is the one where that matters most, since every Node package manager claims
+# it.
+[detect]
+strong = ["bun.lock", "bun.lockb"]
+weak   = ["package.json"]
