@@ -100,12 +100,15 @@ jobs:
   # that built it. A target that is missing here is not a failure -- that host falls back
   # to building from source, which is the default anyway. Adding one is a two-line change.
   #
-  # It waits for `publish`: the download URL is derived from the crate's crates.io
-  # metadata, so assets for a version that never reached the registry are unreachable.
+  # It does **not** wait for `publish`. Producing the assets uses the checked-out source --
+  # the generated wrapper depends on the plugin by path -- so nothing here needs the registry,
+  # and a slow index should not hold a release up. It is the *consuming* side that needs
+  # crates.io: a host derives the download URL from the crate's registry metadata, so a version
+  # that never reached the registry has no assets anyone can find.
   # ---------------------------------------------------------------------------
   assets:
     name: Assets (${{ matrix.target }})
-    needs: [ checks, publish ]
+    needs: [ checks ]
     strategy:
       fail-fast: false
       matrix:
@@ -127,7 +130,7 @@ jobs:
     env:
       # Consumed by version, like anything else. Bumping this is a deliberate act: it
       # decides which wrapper generation an already-published asset was built with.
-      PLUGIN_ASSET_VERSION: "0.2.0"
+      PLUGIN_ASSET_VERSION: "0.2.1"
     steps:
       - uses: actions/checkout@v7
 
@@ -140,14 +143,23 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
-      # `--locked`: the published crate carries its own lockfile, so every release
-      # resolves the same dependency set instead of whatever is newest that day.
+      # Installed from the release archive instead of compiled. This job runs once per
+      # target, and building the tool from source in each of them meant minutes of compiling
+      # per leg for the same bytes every time. `cargo-binstall` reads the archive out of the
+      # release; `[package.metadata.binstall]` in that crate says where the binary sits inside
+      # it.
       #
-      # The version is written unquoted on purpose: `run` uses bash on Linux/macOS and
-      # pwsh on Windows, and quotes around a `${{ }}` value are passed through to the
-      # program by some of those shells.
+      # `--disable-strategies compile` is deliberate: with the compile fallback left on, a
+      # missing or broken archive would silently go back to compiling and this step would keep
+      # "working" while the release got slow again -- the failure nobody reads the logs for.
+      # With it, a release stops instead.
+      #
+      # The version is written unquoted on purpose: `run` uses bash on Linux/macOS and pwsh on
+      # Windows, and quotes around a `${{ }}` value are passed through to the program by some
+      # of those shells.
+      - uses: cargo-bins/cargo-binstall@v1.25.1
       - name: Install plugin-asset
-        run: cargo install crate-plugin-kit --version ${{ env.PLUGIN_ASSET_VERSION }} --bin plugin-asset --locked
+        run: cargo binstall crate-plugin-kit --version ${{ env.PLUGIN_ASSET_VERSION }} --bin plugin-asset --no-confirm --disable-strategies compile
 
       # `--target-dir` keeps its default (`<checkout>/target`), which is what the cache
       # action above stores, so the dependency builds are reused between releases.
