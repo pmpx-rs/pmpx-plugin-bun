@@ -5,6 +5,10 @@
 # path, so committing this would break every lone clone and every CI run.
 /.cargo/config.toml
 
+# `plugin-asset` writes the two release assets here when it is run locally; CI uploads
+# them straight from the runner, so nothing in here is ever committed.
+/dist
+
 # Cargo.lock is committed on purpose, unlike a plain library. CI resolves with
 # `--locked`, so the lockfile is what records which contract crate the mapping was
 # checked against.

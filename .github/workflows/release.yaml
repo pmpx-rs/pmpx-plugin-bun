@@ -16,7 +16,8 @@ on:
     # is enforced here rather than by a script that has to remember to check it.
     tags: [ "v*.*.*" ]
 
-# Read-only by default; the publishing job asks for nothing more.
+# Read-only by default; only the assets job asks for more, because it writes to the
+# tag's release.
 permissions:
   contents: read
 
@@ -84,3 +85,90 @@ jobs:
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
         run: cargo harbor publish
+
+  # ---------------------------------------------------------------------------
+  # The prebuilt assets.
+  #
+  # By default a host installs this plugin by *building* it from the published crate.
+  # These two files let it skip that build: `crate-plugin-kit`'s prebuilt path downloads
+  # them from `.../releases/download/v{version}/`. The tool that writes them comes from
+  # that same crate, which is also the one that consumes them -- so the wrapper, the lib
+  # name and the asset names have one implementation, not two that have to agree.
+  #
+  # One runner per target, because an asset is only ever used by a host built for the
+  # same triple: the extension and the file name both follow the target, not the machine
+  # that built it. A target that is missing here is not a failure -- that host falls back
+  # to building from source, which is the default anyway. Adding one is a two-line change.
+  #
+  # It waits for `publish`: the download URL is derived from the crate's crates.io
+  # metadata, so assets for a version that never reached the registry are unreachable.
+  # ---------------------------------------------------------------------------
+  assets:
+    name: Assets (${{ matrix.target }})
+    needs: [ checks, publish ]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+          - runner: windows-latest
+            target: x86_64-pc-windows-msvc
+          # `macos-13` is retired; `macos-15-intel` is its replacement, and plain
+          # `macos-15` is the Apple silicon image.
+          - runner: macos-15-intel
+            target: x86_64-apple-darwin
+          - runner: macos-15
+            target: aarch64-apple-darwin
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      # Create the release for this tag and upload into it.
+      contents: write
+    env:
+      # Consumed by version, like anything else. Bumping this is a deliberate act: it
+      # decides which wrapper generation an already-published asset was built with.
+      PLUGIN_ASSET_VERSION: "0.2.0"
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install stable toolchain
+        shell: bash
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+          rustc --version
+
+      - uses: Swatinem/rust-cache@v2
+
+      # `--locked`: the published crate carries its own lockfile, so every release
+      # resolves the same dependency set instead of whatever is newest that day.
+      #
+      # The version is written unquoted on purpose: `run` uses bash on Linux/macOS and
+      # pwsh on Windows, and quotes around a `${{ }}` value are passed through to the
+      # program by some of those shells.
+      - name: Install plugin-asset
+        run: cargo install crate-plugin-kit --version ${{ env.PLUGIN_ASSET_VERSION }} --bin plugin-asset --locked
+
+      # `--target-dir` keeps its default (`<checkout>/target`), which is what the cache
+      # action above stores, so the dependency builds are reused between releases.
+      # The tool refuses to write anything if the version in `pmpx-plugin.toml` and the
+      # one in `Cargo.toml` disagree, and it `dlopen`s the result before handing it over.
+      - name: Build the assets
+        run: plugin-asset --id pmpx --target ${{ matrix.target }} --out-dir dist
+
+      # The release object is created here -- the crates.io job does not need one. Every
+      # matrix leg tries, so "already exists" and losing that race are not failures; only
+      # the upload has to succeed.
+      - name: Upload them to the tag
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          tag="$GITHUB_REF_NAME"
+          gh release view "$tag" >/dev/null 2>&1 \
+            || gh release create "$tag" --title "$tag" --notes "Release $tag" \
+            || true
+          gh release upload "$tag" dist/* --clobber
+          echo "assets now on the release:"
+          gh release view "$tag" --json assets --jq '.assets[].name'

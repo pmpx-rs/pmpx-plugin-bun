@@ -75,6 +75,10 @@ $ bun run probe -- --foo   → GOT:--foo
 $ pmpx plugin add bun
 ```
 
+每次发版还会为常见 target（Linux x64、Windows x64、两种 macOS 架构）上传 prebuilt 产物。
+`crate-plugin-kit` 会从同一个 tag 的 release 下载，因此安装通常是一秒而不是一次编译；
+没有产物的 target 会回落到从源码编译 —— 只是慢，不是不能用。
+
 ## 检测
 
 依据随这个 crate 一起发布的 `pmpx-plugin.toml`：
