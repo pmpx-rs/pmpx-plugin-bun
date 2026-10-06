@@ -4,9 +4,18 @@ version = 3
 
 [[package]]
 name = "pmpx-plugin"
-version = "0.2.0"
+version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "81a22f5c9c35f284d2e64c9a1d19ebffeeb4f9a9a94e0e5197f853583ca1127b"
+checksum = "b760f97227a974f8f157e47082ff0f35ccd1d9b8cac2a398ea69a6e13f3297c3"
+dependencies = [
+ "pmpx-plugin-abi",
+]
+
+[[package]]
+name = "pmpx-plugin-abi"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0704ffbc681ec18bfbdcf18ee8f44a5008a1b98a57fac48841ab56dfe63188e2"
 
 [[package]]
 name = "pmpx-plugin-bun"

@@ -23,4 +23,4 @@ name = "pmpx_plugin_bun"
 [dependencies]
 # The contract crate. crate-plugin-kit repeats this requirement verbatim in the wrapper it
 # generates, so it does not have to be a range.
-pmpx-plugin = "0.2.0"
+pmpx-plugin = "0.3.0"

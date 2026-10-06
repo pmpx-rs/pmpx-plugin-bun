@@ -5,7 +5,7 @@
 [plugin]
 name    = "bun"
 version = "0.1.1"
-abi     = 1
+abi     = 3
 family  = "node"
 
 # Evidence used to score this backend against a project root.

@@ -98,13 +98,12 @@ pub fn create() -> Box<dyn PackageManager> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::path::PathBuf;
 
-    fn ctx() -> Context {
-        Context {
-            project_root: PathBuf::from("/tmp/proj"),
-            matched: vec!["bun.lock".to_string(), "package.json".to_string()],
-        }
+    fn ctx() -> Context<'static> {
+        Context::builder()
+            .project_root("/tmp/proj")
+            .matched(["bun.lock", "package.json"])
+            .build()
     }
 
     /// The exact argv the backend gets spawned with, program first.
@@ -207,5 +206,56 @@ mod tests {
         );
         // `bunx` is the program in the argv, not an argument to `bun`.
         assert_eq!(argv(Verb::Exec, &[]), ["bunx"]);
+    }
+    /// The text files a host and the release tool read must agree with the crate and the contract:
+    /// the manifest's `name`/`family`/`version`/`abi`, and the entry symbol the release workflow
+    /// hands to `plugin-asset`.
+    ///
+    /// No compiler checks any of these, and they are trusted: a stale `abi` is how a plugin ends up
+    /// "installed but refused", and a stale `entry_symbol` is how a release fails *after* it has
+    /// published. The check is deliberately a text one -- a TOML or YAML parser would be this
+    /// crate's only dependency, and the MSRV job builds `--all-targets`.
+    #[test]
+    fn the_manifest_and_the_release_workflow_agree_with_the_contract() {
+        // Spaces dropped on both sides so the check does not care how the files are aligned.
+        let manifest = std::fs::read_to_string("pmpx-plugin.toml")
+            .expect("the manifest should be readable")
+            .replace(' ', "");
+        let cargo = std::fs::read_to_string("Cargo.toml")
+            .expect("Cargo.toml should be readable")
+            .replace(' ', "");
+
+        let checked = [
+            ("name", format!("name=\"{}\"", Bun.name())),
+            ("family", format!("family=\"{}\"", Bun.family().as_str())),
+            (
+                "version",
+                format!("version=\"{}\"", env!("CARGO_PKG_VERSION")),
+            ),
+            ("abi", format!("abi={}", pmpx_plugin::abi::PMPX_ABI_MAJOR)),
+        ];
+
+        for (what, wanted) in checked {
+            assert!(
+                manifest.contains(&wanted),
+                "the manifest must declare `{wanted}` for {what}; it says:\n{manifest}"
+            );
+
+            if what == "version" {
+                assert!(
+                    cargo.contains(&wanted),
+                    "Cargo.toml must declare `{wanted}` too, or the store reports a version this crate does not have"
+                );
+            }
+        }
+
+        let release = std::fs::read_to_string(".github/workflows/release.yaml")
+            .expect("the release workflow should be readable")
+            .replace(' ', "");
+        let symbol = format!("entry_symbol:{}", pmpx_plugin::abi::PMPX_ENTRY_SYMBOL);
+        assert!(
+            release.contains(&symbol),
+            "release.yaml must pass `{symbol}` to the asset tool, or the release fails after publishing"
+        );
     }
 }

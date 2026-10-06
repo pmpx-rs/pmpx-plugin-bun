@@ -141,6 +141,10 @@ jobs:
       # The host this plugin serves. The assets are named for it: `pmpx-plugin.toml`, the
       # `pmpx-plugin-` crate prefix, the `pmpx_plugin_` lib stem.
       id: pmpx
+      # The contract's entry symbol, which is what the tool loads the finished cdylib with.
+      # `plugin-asset` derives a default from the id (`pmpx_plugin_entry_v1`), and that default
+      # is wrong for ABI v3 -- so a host whose symbol has moved passes it here.
+      entry_symbol: pmpx_plugin_entry_v3
     permissions:
       # The called workflow can only narrow this; it needs to write to the release.
       contents: write
